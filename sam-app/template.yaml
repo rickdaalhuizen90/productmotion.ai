@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: |
+  sam-app
+  Kling API Integration with User Credit System
+
+Parameters:
+  KlingApiKey:
+    Type: String
+    Description: API Key for Kling API
+    NoEcho: true
+  Stage:
+    Type: String
+    Default: stag # prod for Production Mode
+    Description: Deployment stage
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 256
+    Runtime: nodejs22.x
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref UserCreditsTable
+        KLING_API_ENDPOINT: https://api.klingai.com/v1/videos/image2video
+        KLING_API_KEY: !Ref KlingApiKey
+        STATIC_MASK_URL: https://h2.inkwai.com/bs2/upload-ylab-stunt/ai_portal/1732888177/cOLNrShrSO/static_mask.png
+        DYNAMIC_MASK_URL: https://h2.inkwai.com/bs2/upload-ylab-stunt/ai_portal/1732888130/WU8spl23dA/dynamic_mask_1.png
+
+Resources:
+  ApiGateway:
+    Type: AWS::Serverless::Ap
+    Properties:
+      StageName: !Ref Stage
+      Cors:
+        AllowMethods: '''POST, OPTIONS'''
+        AllowHeaders: '''Content-Type,Authorization'''
+        AllowOrigin: '''*'''
+
+  KlingProcessorFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: lambdas/
+      Handler: app.handler
+      Runtime: nodejs22.x
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserCreditsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:Query
+              Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/UserCreditsTable
+        - CloudWatchLogsFullAccess
+      Events:
+        ApiEvent:
+          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            Path: /process
+            Method: post
+            RestApiId: !Ref ApiGateway
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2020
+        Sourcemap: false
+        EntryPoints:
+          - dist/app.js
+
+  UserCreditsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+    Metadata:
+      # Manage biome properties
+      BuildMethod: biome
+      BuildProperties:
+        Minify: true
+        Target: es2020
+        Sourcemap: true
+        EntryPoints:
+          - app.ts
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/process
+  KlingProcessorFunction:
+    Description: Lambda Function ARN
+    Value: !GetAtt KlingProcessorFunction.Arn
+  UserCreditsTable:
+    Description: DynamoDB Table Name
+    Value: !Ref UserCreditsTable
